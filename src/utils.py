@@ -3,6 +3,14 @@ import os
 from pathlib import Path
 
 def setup_logger(name: str, level = logging.INFO):
+    """
+    Set up a logger that writes to a file in the logs directory.
+    Args:
+        name (str): The name of the logger.
+        level: The logging level (default: logging.INFO).
+    Returns:
+        logging.Logger: Configured logger instance.
+    """
     log_dir = Path(__file__).parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
 
