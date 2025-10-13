@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 
 from bs4 import BeautifulSoup as BS
 
-@tool
+
 def interact_with_website_to_get_to_the_first_link(url, search_query, action="click", wait_time=10):
     """
     Interact with a website using Selenium WebDriver.
