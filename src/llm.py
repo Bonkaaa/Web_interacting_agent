@@ -15,7 +15,7 @@ def get_llm():
         model = os.environ.get("MODEL_NAME", "gemini-2.5-pro"),
         temperature=0.2,
         max_output_tokens=512,
-        top_k=0.9,
+        top_k=40,
         convert_system_message_to_human = True,
         google_api_key = os.environ.get("GOOGLE_API_KEY")
     )

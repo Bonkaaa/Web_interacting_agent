@@ -4,9 +4,8 @@ langchain-core
 langchain_community
 langchain_huggingface
 langchain-ollama
-transformers
-requests
 python-dotenv
 selenium
 webdriver_manager
 bs4
+langchain-google-genai
