@@ -115,7 +115,7 @@ if __name__ == "__main__":
         "url": "https://www.google.com"
     }
 
-    final_state = agent.run(initial_state)
+    final_state = agent.invoke(initial_state)
 
     print("\nFinal Response Summary:")
     print(final_state["response_summary"])

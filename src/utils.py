@@ -1,6 +1,7 @@
 import logging
 import os 
 from pathlib import Path
+import json
 
 def setup_logger(name: str, level = logging.INFO):
     """
@@ -28,3 +29,29 @@ def setup_logger(name: str, level = logging.INFO):
     logger.addHandler(file_handler)
 
     return logger
+
+def dump_json_to_file(data: dict, filename: str):
+    """
+    Dump a dictionary to a JSON file.
+    Args:
+        data (dict): The data to dump.
+        filename (str): The name of the file to write to.
+    """
+    log_dir = Path(__file__).parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    file_path = log_dir / filename
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def write_text_to_file(text: str, filename: str):
+    """
+    Write text to a file.
+    Args:
+        text (str): The text to write.
+        filename (str): The name of the file to write to.
+    """
+    log_dir = Path(__file__).parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    file_path = log_dir / filename
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(text)

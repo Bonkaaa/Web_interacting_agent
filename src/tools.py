@@ -11,9 +11,11 @@ from selenium.webdriver.common.keys import Keys
 import time
 import random
 
-from langchain_core.tools import tool
+from langchain_core.tools import Tool
 
 from bs4 import BeautifulSoup as BS
+
+from .utils import write_text_to_file, dump_json_to_file
 
 
 def interact_with_website_to_get_to_the_first_link(url, search_query, action="click", wait_time=10):
@@ -29,7 +31,7 @@ def interact_with_website_to_get_to_the_first_link(url, search_query, action="cl
     """
     
     options = Options()
-    options.add_argument("--headless")
+    # options.add_argument("--headless")
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options = options)
 
@@ -42,7 +44,7 @@ def interact_with_website_to_get_to_the_first_link(url, search_query, action="cl
     for char in search_query:
         search_box.send_keys(char)
         time.sleep(random.uniform(0.1, 0.3))
-    search_box.send_keys(Keys.Enter)
+    search_box.send_keys(Keys.ENTER)
 
     time.sleep(5)
 
@@ -55,7 +57,7 @@ def interact_with_website_to_get_to_the_first_link(url, search_query, action="cl
         print("Search completed successfully!")
 
     try: 
-        titles = driver.find_element(By.TAG_NAME, "h3")
+        titles = driver.find_elements(By.TAG_NAME, "h3")
         print(f"\nFound {len(titles)} search result titles:")
         for i, title in enumerate(titles[:5], 1):  # Show first 5 results
             if title.text:
@@ -76,7 +78,7 @@ def interact_with_website_to_get_to_the_first_link(url, search_query, action="cl
         except TimeoutException:
             print("Element not found, continuing...")
 
-    time.sleep5(5)
+    time.sleep(5)
 
     WebDriverWait(driver, wait_time).until(
         EC.presence_of_element_located((By.TAG_NAME, "article"))
@@ -85,20 +87,67 @@ def interact_with_website_to_get_to_the_first_link(url, search_query, action="cl
     html = driver.page_source
     soup = BS(html, "html.parser")
 
-    for tag in soup.find_all(['script', 'style', 'header', 'footer', 'nav', 'aside']):
-        tag.decompose()
-    
-    title = soup.find('h1').get_text() if soup.find('h1') else "No title found"
-    text = soup.get_text(separator='\n', strip=True)
+    content_for_llm = {}
 
-    content_for_llm = f"Title: {title}\n\nContent:\n{text[:1000]}"
+    article = soup.find("article") if soup.find("article") else None
+    if article:
+        content_for_llm["article"] = article.get_text(separator="\n", strip=True)
+    
+    main = soup.find("main") if soup.find("main") else None
+    if main:
+        content_for_llm["main"] = main.get_text(separator="\n", strip=True)
+    
+    content_div = None
+    for id_name in ["content", "post", "article"]:
+        content_div = soup.find("div", id=id_name) if soup.find("div", id=id_name) else None
+        if content_div:
+            content_for_llm["content_div"] = content_div.get_text(separator="\n", strip=True)
+            break
+    
+    paragraphs = soup.find_all("p") if soup.find_all("p") else []
+    if paragraphs:
+        para_texts = [p.get_text(separator="\n", strip=True) for p in paragraphs if p.get_text(strip=True)]
+        content_for_llm["paragraphs"] = "\n".join(para_texts)
+    
+    headers = []
+    for level in range(1, 7):
+        headers.extend(soup.find_all(f"h{level}"))
+        if headers:
+            header_texts = [h.get_text(separator="\n", strip=True) for h in headers if h.get_text(strip=True)]
+            content_for_llm["headers"] = "\n".join(header_texts)
+            break
 
     driver.quit()
 
     return content_for_llm
 
+def create_driver():
+    options = Options()
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options = options)
+    return driver
+
+
+def access_url(url: str, driver):
+    """
+    Tool to access a URL and perform a search query.
+    Args:
+        url (str): The URL to access.
+        search_query (str): The search query to input.
+    """
+    driver.get(url)
+    WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.NAME, "q"))
+    )
+    return "URL accessed successfully."
+
+
+
+        
+
 if __name__ == "__main__":
     url = "https://www.google.com"
     search_query = "OpenAI"
     result = interact_with_website_to_get_to_the_first_link(url, search_query)
-    print("Extracted Content for LLM:\n", result)
+    dump_json_to_file(result, "extracted_content.json")
+    print("Done")
