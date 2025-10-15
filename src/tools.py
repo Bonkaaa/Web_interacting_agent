@@ -15,7 +15,10 @@ from langchain_core.tools import Tool
 
 from bs4 import BeautifulSoup as BS
 
-from .utils import write_text_to_file, dump_json_to_file
+from .utils import write_text_to_file, dump_json_to_file, setup_logger
+
+logger = setup_logger("tools")
+
 
 
 def interact_with_website_to_get_to_the_first_link(url, search_query, action="click", wait_time=10):
@@ -122,6 +125,11 @@ def interact_with_website_to_get_to_the_first_link(url, search_query, action="cl
     return content_for_llm
 
 def create_driver():
+    """
+    Create and return a Selenium WebDriver instance.
+    Returns:
+        WebDriver: The Selenium WebDriver instance.
+    """
     options = Options()
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options = options)
@@ -133,13 +141,134 @@ def access_url(url: str, driver):
     Tool to access a URL and perform a search query.
     Args:
         url (str): The URL to access.
-        search_query (str): The search query to input.
+        driver: The Selenium WebDriver instance.
+    Returns:
+        str: A message indicating the URL was accessed.
     """
     driver.get(url)
     WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.NAME, "q"))
     )
-    return "URL accessed successfully."
+    logger.info(f"Accessed URL: {url}")
+    return f"Accessed URL: {url}"
+
+
+def find_element(by: str, value: str, driver):
+    """
+    Tool to find an element by a given method
+    Args:
+        by (str): The method to locate the element (e.g., "name", "id", "xpath").
+        value (str): The value to locate the element.
+        driver: The Selenium WebDriver instance.
+    Returns:
+        WebElement or str: The found element or a message indicating it was not found.
+    """
+    by_methods = {
+        "name": By.NAME,
+        "id": By.ID,
+        "xpath": By.XPATH,
+        "css": By.CSS_SELECTOR,
+        "class": By.CLASS_NAME,
+        "tag": By.TAG_NAME,
+        "link_text": By.LINK_TEXT,
+        "partial_link_text": By.PARTIAL_LINK_TEXT
+    }
+    if by not in by_methods:
+        logger.error(f"Invalid 'by' method: {by}. Choose from {list(by_methods.keys())}.")
+        return f"Invalid 'by' method: {by}. Choose from {list(by_methods.keys())}."
+    
+    try:
+        element = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((by_methods[by], value))
+        )
+        logger.info(f"Element found by {by} with value {value}.")
+        return element
+    except TimeoutException:
+        logger.error(f"Element not found by {by} with value {value}.")
+        return f"Element not found by {by} with value {value}."
+    
+def click_element(element):
+    """
+    Tool to click on a given web element.
+    Args:
+        element: The web element to click.
+    Returns:
+        str: A message indicating the result of the click action.
+    """
+    try:
+        element.click()
+        logger.info("Element clicked successfully.")
+        return "Element clicked successfully."
+    except Exception as e:
+        logger.error(f"Error clicking element: {e}")
+        return f"Error clicking element: {e}"
+
+def search_element(element, query):
+    """
+    Tool to input a search query into a given web element.
+    Args:
+        element: The web element to input the query into.
+        query (str): The search query to input.
+    Returns:
+        str: A message indicating the result of the input action.
+    """
+    try:
+        for char in query:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.1, 0.3))
+        element.send_keys(Keys.ENTER)
+        logger.info(f"Search query '{query}' input successfully.")
+        return f"Search query '{query}' input successfully."
+    except Exception as e:
+        logger.error(f"Error inputting search query: {e}")
+        return f"Error inputting search query: {e}"
+    
+def get_html_from_driver(driver):
+    """
+    Tool to get the HTML content from the current page of the WebDriver.
+    Args:
+        driver: The Selenium WebDriver instance.
+    """
+    try: 
+        html = driver.page_source
+        logger.info("HTML content retrieved successfully.")
+        return html
+    except Exception as e:
+        logger.error(f"Error retrieving HTML content: {e}")
+        return f"Error retrieving HTML content: {e}"
+    
+def simplify_html(html):
+    """
+    Tool to simplify HTML content by removing scripts, styles, and extracting key elements.
+    Args:
+        html (str): The HTML content to simplify.
+    Returns:
+        list: A summary of key HTML elements.
+    """
+    html_content = BS(html, 'html.parser')
+
+    summary = []
+
+    for tag in html_content(['script', 'style', 'meta', 'link']):
+        tag.decompose()
+
+    for element in html_content.find_all(['button', 'input', 'select', 'textarea', 'a', 'form']):
+        element_info = {
+            'tag': element.name,
+            'text': element.get_text(strip=True)[:100],  # Limit text length
+            'id': element.get('id'),
+            'class': element.get('class'),
+            'name': element.get('name'),
+            'type': element.get('type'),
+        }
+        summary.append(element_info)
+
+    return summary
+
+
+
+
+    
 
 
 

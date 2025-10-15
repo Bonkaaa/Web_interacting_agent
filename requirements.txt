@@ -9,3 +9,5 @@ selenium
 webdriver_manager
 bs4
 langchain-google-genai
+readability-lxml
+requests
