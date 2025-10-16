@@ -3,7 +3,7 @@ from langchain_core.messages import HumanMessage, AIMessage, AnyMessage, SystemM
 
 from .utils import setup_logger
 from .llm import get_llm
-from .tools import interact_with_website_to_get_to_the_first_link
+from .tools import tools
 
 from .prompts import WEB_INTERACTING_AGENT_SYSTEM_PROMPT, WEB_INTERACTING_AGENT_USER_PROMPT, SUMMARIZATION_SYSTEM_PROMPT, SUMMARIZATION_USER_PROMPT
 
@@ -18,44 +18,62 @@ class State(TypedDict):
     response: str
     response_summary: str
     url: str
+    tool_call_count: int
 
 def create_agent():
     llm = get_llm()
 
     llm_with_tools = llm.bind_tools(
-        [interact_with_website_to_get_to_the_first_link]
+        tools=tools,
     )
 
 
-    def tool_calling_llm_node(state: State) -> State:
-        search_query = state["request"]
-        url = state["url"]
-
+    def interacting_web_node(state: State) -> State:
         system_prompt = WEB_INTERACTING_AGENT_SYSTEM_PROMPT
         user_prompt = WEB_INTERACTING_AGENT_USER_PROMPT.format(
-            url=url,
-            search_query=search_query
+            url=state["url"],
+            request=state["request"]
         )
-
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ]
-
-        state["messages"].extend(messages)
-
+        
+        # Only add system and user messages if messages list is empty
+        if not state["messages"]:
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt)
+            ]
+            state["messages"].extend(messages)
+        
         try:
-            response = llm_with_tools.invoke(messages)
-            cleaned_response = response.choices[0].message.content.strip()
+            response = llm_with_tools.invoke(state["messages"])
+            cleaned_response = response.content.strip()
+
+            if not hasattr(response, 'tools_calls') or not response.tools_calls:
+                state["response"] = cleaned_response
+
+            state["messages"].append(AIMessage(content=cleaned_response))
+            logger.info(f"Interacting Web Response: {cleaned_response}")
+
         except Exception as e:
-            logger.error(f"Error during LLM tools calling: {e}")
-            cleaned_response = "Error: Unable to get response from LLM."
-
-        logger.info(f"LLM Response: {cleaned_response}")
-        state["response"] = cleaned_response
-        state["messages"].append(AIMessage(content=cleaned_response))
-
+            logger.error(f"Error during LLM interaction: {e}")
+            state["response"] = "Error: Unable to get response from LLM."
+            state["messages"].append(AIMessage(content=state["response"]))
+        
         return state
+
+    
+    def should_continue(state: State):
+        last_message = state["messages"][-1] if state["messages"] else None
+        # tool_count = state.get("tool_call_count", 0)
+
+        # if tool_count >= 5:
+        #     return 'summarize'
+
+        if isinstance(last_message, AIMessage):
+            # Check if the last message has tool calls
+            if hasattr(last_message, 'tools_calls') and last_message.tools_calls:
+                return 'tools'
+        return 'summarize'
+        
 
     def summarize_node(state: State) -> State:
         tool_response = state["response"]
@@ -74,7 +92,7 @@ def create_agent():
 
         try: 
             response = llm.invoke(messages)
-            cleaned_response = response.choices[0].message.content.strip()
+            cleaned_response = response.content.strip()
         except Exception as e:
             logger.error(f"Error during LLM summarization: {e}")
             cleaned_response = "Error: Unable to get response from LLM."
@@ -89,19 +107,32 @@ def create_agent():
     def build_graph() -> StateGraph:
         graph = StateGraph(State)
 
-        graph.add_node("tool_calling_llm", tool_calling_llm_node)
+        # Add nodes
+        graph.add_node("interacting_web", interacting_web_node)
         graph.add_node("summarize", summarize_node)
 
-        graph.add_edge(START, "tool_calling_llm")
-        graph.add_edge("tool_calling_llm", "summarize")
+        # Define workflow
+        graph.add_edge(START, "interacting_web")
+
+        graph.add_conditional_edges(
+            "interacting_web",
+            should_continue,
+            {
+                'tools': "tools",
+                'summarize': "summarize"
+            }
+        )
+        
+        # Loop back to interacting_web after tools execution
+        graph.add_edge('tools', "interacting_web")
+
+        # Final edge to END after summarization
         graph.add_edge("summarize", END)
 
         return graph.compile()
     
 
-    graph = build_graph()
-
-    return graph
+    return build_graph()
 
 
 if __name__ == "__main__":
