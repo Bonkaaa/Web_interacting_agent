@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
-from .template import summarizer_prompt
-from .llm import get_llm
+
+from components.llm import get_llm
+from components.template import summarize_prompt
 
 class SummarySchema(BaseModel):
     summary: str = Field(

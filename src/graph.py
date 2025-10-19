@@ -5,13 +5,13 @@ from agent import planning_node, selenium_node, route_workflow_node, tool_node, 
 def create_graph() -> StateGraph:
     graph = StateGraph(State)
 
-    graph.add_node("planning", planning_node)
+    graph.add_node("planner", planning_node)
     graph.add_node("agent", selenium_node)
     graph.add_node("tools", tool_node)
     graph.add_node("summarize", summarize_node)
 
-    graph.add_edge(START, "planning")
-    graph.add_edge("planning", "agent")
+    graph.add_edge(START, "planner")
+    graph.add_edge("planner", "agent")
 
     graph.add_conditional_edges(
         "agent",
