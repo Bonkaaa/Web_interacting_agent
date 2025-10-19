@@ -8,6 +8,6 @@ python-dotenv
 selenium
 webdriver_manager
 bs4
-langchain-google-genai
+langchain-ollama
 requests
-trafilatura
+torch 
