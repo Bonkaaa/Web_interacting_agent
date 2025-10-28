@@ -5,3 +5,4 @@ __pycache__
 chromedriver.exe
 logs
 test
+__init__.py

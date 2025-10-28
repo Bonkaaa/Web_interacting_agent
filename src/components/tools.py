@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 
 from bs4 import BeautifulSoup as BS
 
-from utils import setup_logger
+from src.utils import setup_logger
 
 logger = setup_logger("tools")
 
@@ -253,6 +253,27 @@ def close_driver():
         _driver.quit()
         _driver = None
         logger.info("WebDriver instance closed.")
+
+
+def extract_accessibility_tree():
+    try:
+        result = _driver.execute_cdp_cmd("Accessibility.getFullAXTree", {})
+        nodes = result.get("nodes", [])
+
+        seen_ids = set()
+        unique_nodes = []
+        for node in nodes:
+            if node["nodeId"] not in seen_ids:
+                unique_nodes.append(node)
+                seen_ids.add(node["nodeId"])
+
+        return unique_nodes
+    except Exception as e:
+        logger.info("Error extracting accessibility tree: {e}")
+        return []
+
+
+
 
 tools = [
     create_driver,
