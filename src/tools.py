@@ -1,5 +1,3 @@
-from .utils import setup_logger, dump_json_to_file, write_text_to_file
-from typing import Any, TypedDict, Literal
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -9,15 +7,17 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.keys import Keys
-import json
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.remote.webelement import WebElement
+
+from utils import setup_logger
 import time
+import random
 
+from typing import Any, TypedDict, Literal
 
-
-logger = setup_logger("utils_agent")
-
+logger = setup_logger("tools")
 IndentStyle = Literal["ASCII", "Tab"]
-
 
 class AccessibilityTreeNode(TypedDict):
     nodeId: str
@@ -32,6 +32,23 @@ class AccessibilityTreeNode(TypedDict):
     frameId: str
 
 AccessibilityTree = list[AccessibilityTreeNode]
+
+
+def create_webdriver() -> webdriver.Chrome:
+    options = Options()
+
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+
+    logger.info("WebDriver instance created.")
+    return driver
+
+def access_url(driver: webdriver.Chrome, url: str) -> None:
+    driver.get(url)
+    logger.info(f"Accessed URL: {url}")
 
 
 def extract_accessibility_tree(
@@ -118,124 +135,135 @@ def parse_accessibility_tree(
     tree_str = "\n".join(tree_list)
     return tree_str, node_map
 
-def find_backend_id(
-    accessibility_tree: AccessibilityTree,
-    role: str,
-    name: str
-):
-    for key, node in accessibility_tree.items():
-        node_role = node.get('role', {}).get('value', '')
-        node_name = node.get('name', {}).get('value', '')
-        
-        if node_role == role and node_name == name:
-            return node.get('backendDOMNodeId', None)
+def extract_element_from_accessibility_tree(
+    node_idx: int,
+    node_map: dict[str, Any],
+    driver: webdriver.Chrome
+) -> tuple[Any, str, str] | None:
+    backend_DOM_node_id = node_map[node_idx]['backendDOMNodeId']
 
-if __name__ == "__main__":
-    options = Options()
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.get("https://chatgpt.com")
-
-    accessibility_tree = extract_accessibility_tree(driver)
-
-    tree_str, node_map = parse_accessibility_tree(accessibility_tree)
-    # dump_json_to_file(accessibility_tree, "accessibility_tree.json")
-
-    # dump_json_to_file(node_map, "parsed_accessibility_tree.json")
-
-    # write_text_to_file(tree_str, "accessibility_tree.txt")
-
-    ####### Test clicking an element by role and name #######
-
-    node_id = find_backend_id(
-        node_map,
-        role="link",
-        name="Terms"
-    )
-
-    print(f"Backend Node ID: {node_id}")
-
-    # object_result = driver.execute_cdp_cmd(
-    #     "DOM.resolveNode",
-    #     {
-    #         "backendNodeId": node_id
-    #     }
-    # )
-    # # print(json.dumps(object_result, indent=4))
-
-    # object_id = object_result["object"]["objectId"]
-    # print(object_id)
-
-    # driver.execute_cdp_cmd(
-    #     "Runtime.callFunctionOn",
-    #     {
-    #         "functionDeclaration": "function() { this.click(); }",
-    #         "objectId": object_id
-    #     }
-    # )
-
-    # time.sleep(5)
-
-    # print(tree_str)
-    # print(f"Total nodes extracted: {len(node_map)}")
-
-    # driver.quit()
-
-    # time.sleep(2)
+    role = node_map[node_idx].get('role', {}).get('value', '')
+    name = node_map[node_idx].get('name', {}).get('value', '')
 
     obj = driver.execute_cdp_cmd(
         "DOM.resolveNode",
         {
-            "backendNodeId": node_id
+            "backendNodeId": backend_DOM_node_id
         }
     )
 
-    object_id = obj["object"]["objectId"]
+    object_id = obj['object']['objectId']
 
-    print(object_id)
-
-    tag_id = int(time.time() * 1000)
-    tag_attribute = f"data-temp-{tag_id}"
+    tag_id = random.randint(100000, 999999)
+    tag_atribute = f"web_interacting_agent_tag_{tag_id}"
 
     driver.execute_cdp_cmd(
         "Runtime.callFunctionOn",
         {
-            "functionDeclaration": f"function() {{ this.setAttribute('{tag_attribute}', 'true'); }}",
-            "objectId": object_id
+            "functionDeclaration": f"function() {{ this.setAttribute('{tag_atribute}', 'true'); }}",
+            "objectId": object_id,
         }
     )
 
-    selector = f"[{tag_attribute}='true']"
+    selector = f"[{tag_atribute}='true']"
 
     try:
         WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, selector))
         )
     except TimeoutException:
-        raise Exception("Element not found with the temporary attribute.")
-
-
+        logger.error("Timed out waiting for the web element to be located.")
+        return None
+    
     element = driver.find_element(By.CSS_SELECTOR, selector)
-
+    
     driver.execute_cdp_cmd(
         "Runtime.callFunctionOn",
         {
-            "functionDeclaration": f"function() {{ this.removeAttribute('{tag_attribute}'); }}",
-            "objectId": object_id
+            "functionDeclaration": f"function() {{ this.removeAttribute('{tag_atribute}'); }}",
+            "objectId": object_id,
         }
     )
 
-    print(element.text)
+    return element, role, name
 
+def execute_click_action(
+    driver: webdriver.Chrome,
+    web_element: Any
+) -> None:
+    original_tabs = driver.window_handles
+    driver.execute_script("arguments[0].setAttribute('target', '_self');", web_element)
+    web_element.click()
+    time.sleep(3)
+    new_tabs = driver.window_handles
+    if len(new_tabs) > len(original_tabs):
+        new_tab = [tab for tab in new_tabs if tab not in original_tabs][0]
+        driver.switch_to.window(new_tab)
+        new_tab_url = driver.current_url
+        driver.close()
+        driver.switch_to.window(original_tabs[0])
+        driver.get(new_tab_url)
+        time.sleep(2)
+
+def execute_type_action(
+    driver: webdriver.Chrome,
+    web_element: Any,
+    text: str
+) -> str:
+    warn_obs = ""
+
+    element_tag_name = web_element.tag_name.lower()
+    element_type = web_element.get_attribute("type") or ""
+
+    if element_tag_name != "input" and element_type != "textarea":
+        warn_obs = f"Warning: The web element you are trying to type into may not be a textbox. It is a <{element_tag_name}> element, type '{element_type}'."
+        logger.warning(warn_obs)
+
+    # Clear existing text
+    try:
+        web_element.clear()
+        web_element.send_keys(" ")
+        web_element.send_keys(Keys.BACKSPACE)
+    except:
+        logger.warning("Unable to clear existing text in the web element.")
+
+    action = ActionChains(driver)
+
+    action.click(web_element).perform()
+    time.sleep(1)
+
+    action.send_keys(text).perform()
+    time.sleep(2)
+
+    action.send_keys(Keys.ENTER).perform()
     time.sleep(5)
 
+    return warn_obs
 
+def execute_wait_action(
+    driver: webdriver.Chrome,
+) -> None:
+    time.sleep(5)
+
+def execute_go_back_action(
+    driver: webdriver.Chrome,
+) -> None:
+    driver.back()
+    time.sleep(5)
+
+def execute_go_home_action(
+    driver: webdriver.Chrome,
+) -> None:
+    driver.get('https://www.google.com')
+    time.sleep(5)
+
+def extract_data_from_element(
+    web_element: WebElement
+) -> str:
+    try:
+        text_content = web_element.text
+        return text_content
+    except Exception as e:
+        logger.error(f"Error extracting text from web element: {e}")
+        return ""
     
-
-        
-            
-
-
-
-

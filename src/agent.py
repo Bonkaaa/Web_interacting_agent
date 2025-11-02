@@ -1,177 +1,343 @@
 from langgraph.graph import StateGraph, START, END, add_messages
 from langchain_core.messages import HumanMessage, AIMessage, AnyMessage, SystemMessage
-from langgraph.prebuilt import ToolNode
+
+from selenium.webdriver.remote.webelement import WebElement
 
 from utils import setup_logger
-from components.llm import get_llm
-from components.tools import tools
+from tools import create_webdriver, access_url, extract_accessibility_tree, parse_accessibility_tree, extract_element_from_accessibility_tree, execute_click_action, execute_type_action, execute_wait_action, execute_go_home_action, execute_go_back_action, extract_data_from_element
 
-from components.planner import create_planner
-from components.selenium import create_selenium_agent
-from components.summarize import create_summarizer_agent
-from prompts import PLANNING_USER_PROMPT, SELENIUM_USER_PROMPT, SUMMARIZE_USER_PROMPT
+from components.reAct import reAct_agent
 
-from typing_extensions import TypedDict, Annotated
+from typing_extensions import TypedDict, Annotated, Any, List, Union
 import json
 
-
-logger = setup_logger("agent")
-
 class State(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]
-    request: str
-    summary: str
+    messages: Annotated[List[AnyMessage], add_messages]
+    task: str
+    answer: str
+    web_element: WebElement
     url: str
-    tool_call_count: int
-    plan: dict
-    llm_response: dict
+    driver: object
+    accessibility_tree_str: str
+    accessibility_node_map: dict[str, Any]
+    action_history: List[List[Union[str, str, str]]] # [role, name, action]
+    warn_obs: List[str]
+    action: List[Union[int, str]]
 
-planner = create_planner()
-selenium_agent = create_selenium_agent()
+logger = setup_logger("new_agent")
 
-tool_node = ToolNode(tools=tools)
+def start_driver_and_access_url_node(state: State) -> dict:
+    try:
+        driver_response = create_webdriver()
 
-def planning_node(state: State) -> State:
+        access_url(driver_response, state["url"])
+        logger.info(f"Accessed URL: {state['url']}")
+    except Exception as e:
+        logger.error(f"Error in start_driver_and_access_url: {e}")
+    return {
+        "driver": driver_response,
+    }
 
-    user_prompt = PLANNING_USER_PROMPT.format(request=state["request"])
+def extract_accessibility_tree_node(state: State) -> dict:
+    webdriver = state["driver"]
 
-    request = [
-        HumanMessage(content=user_prompt)
-    ]
+    if webdriver:
+        accessibility_tree = extract_accessibility_tree(webdriver)
+        accessibility_tree_str, accessibility_node_map = parse_accessibility_tree(accessibility_tree)
+
+        if accessibility_tree_str and accessibility_node_map:
+            logger.info("Extracted and parsed accessibility tree successfully.")
+        else:
+            logger.error("Failed to parse accessibility tree.")
+    else:
+        logger.error("WebDriver instance is not available.")
+        return {}
+
+    return {
+        "accessibility_tree_str": accessibility_tree_str,
+        "accessibility_node_map": accessibility_node_map
+    }
+
+def reAct_node(state: State) -> dict:
+    reAct = reAct_agent()
+
+    user_message = f"""
+    Message for ReAct Agent:
+    Task: {state['task']}
+    Accessibility Tree: {state['accessibility_tree_str']}
+    Action History: {json.dumps(state['action_history'])}
+    """
+
+    human_message = HumanMessage(content=user_message)
+    logger.info(f"ReAct User Message: {human_message.content}")
+    
+    new_messages = [human_message]
+
+    reAct_input = {
+        "accessibility_tree_str": state["accessibility_tree_str"],
+        "action_history": json.dumps(state["action_history"]),
+        "task": state["task"]
+    }
 
     try:
-        plan = planner.invoke(
-            {
-                "request": request[0].content
-            }
-        )
-        list_plan = plan.steps
-        logger.info(f"Generated Plan: {list_plan}")
+        reAct_response = reAct.invoke(reAct_input)
 
-        state["plan"] = list_plan
+        thought = reAct_response.thought
+        action = reAct_response.action
 
-        state["messages"].extend(request[0])
-        state["messages"].append(AIMessage(content=json.dumps(dict(plan))))
+        logger.info(f"ReAct Thought: {thought}")
+        logger.info(f"ReAct Action: {action}")
 
-    except Exception as e:
-        logger.error(f"Error in planning_node: {e}")
-        state["plan"] = {"steps": []}
-        
-    return state
-    
-def selenium_node(state: State) -> State:
-    plan = state.get("plan", {})
 
-    plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan.get("steps", [])))
+        ai_message = AIMessage(content=f"Thought: {thought}\nAction: {action}")
+        new_messages.append(ai_message)
 
-    tool_call_count = state.get("tool_call_count", 0)
-
-    task = plan.get("steps", [])[tool_call_count] if tool_call_count < len(plan.get("steps", [])) else ""
-
-    user_prompt = SELENIUM_USER_PROMPT.format(plan_str=plan_str, task=task)
-
-    if not task:
-        end_messages = [
-            HumanMessage(content="No more steps to execute. No tool call needed.")
-        ]
-        response = selenium_agent.invoke(
-            {
-                "steps": end_messages[0].content,
-            }
-        )
-        state["response"] = response
-
-        return state
-    try: 
-        messages = [
-            HumanMessage(content=user_prompt)
-        ]
-
-        selenium_response = selenium_agent.invoke(
-            {
-                "step": messages[0].content,
-            }
-        )
-        logger.info(f"Selenium Agent Response for step '{task}': {selenium_response.content}")
-
-        state["messages"].append(messages[0])
-        state["messages"].append(AIMessage(content=selenium_response.content))
-
-        state["llm_response"] = selenium_response
+        return {
+            "messages": new_messages,
+            "action": action
+        }
 
     except Exception as e:
-        logger.error(f"Error in selenium_node: {e}")
-        state["llm_response"] = f"Error executing step '{task}': {e}"
+        logger.error(f"Error in reAct_node: {e}")
+        return {
+            "messages": new_messages,
+            "action": []
+        }
+
+def click_node(
+    state: State
+) -> dict:
+    driver = state["driver"]
+    accessibility_node_map = state["accessibility_node_map"]
+    action = state["action"]
+
+    if not driver or not accessibility_node_map or not action:
+        error = "Missing driver, accessibility_node_map, or action in state."
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+
+    element_index = action[0]
+    action_type = action[1]
+
+    if "click" not in action_type.lower():
+        error = f"Action type is not click: {action_type}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
         
-    return state
-    
-def route_workflow_node(state: State):
-    tool_call_count = state.get("tool_call_count", 0)
-    llm_response = state.get("llm_response", "")
+    web_element, role, name = extract_element_from_accessibility_tree(
+        node_idx=element_index,
+        node_map=accessibility_node_map,
+        driver=driver
+    )
 
-    if "Error" in state.get("llm_response", ""):
-        return "agent"
-    elif tool_call_count + 1 < len(state.get("plan", {}).get("steps", [])) or "No tool call needed" in state["messages"][-1].content.strip().lower() or not llm_response["tool_calls"]:
-        # if isinstance(llm_response.content, dict):
-        return "summarize"
+    if not web_element:
+        error = f"Web element not found for index: {element_index}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
         
-        ### Add replanner
-        
-    tool_call_count += 1
-    state["tool_call_count"] = tool_call_count
-    return "tools"
-
-def summarize_node(state: State):
-
-
-    summarization_agent = create_summarizer_agent()
-
-    summary_dict = dict(state["llm_response"].content)
-
     try:
-        user_prompt = SUMMARIZE_USER_PROMPT.format(
-            html_content=summary_dict
+        execute_click_action(
+            driver=driver,
+            web_element=web_element
         )
-
-        messages = [
-            HumanMessage(content=user_prompt)
-        ]
-
-        summary_response = summarization_agent.invoke(
-            {
-                "html_content": messages[0].content
-            }
-        )
-
-        logger.info(f"Summarization Response: {summary_response.content}")
-        
-        state["messages"].append(messages[0])
-        state["messages"].append(AIMessage(content=summary_response.content))
-
-        state["summary"] = summary_response.content
-
+        logger.info(f"Executed click action on element index: {element_index}")
+        return {
+            "warn_obs": "",
+            "action_history": state["action_history"] + [[role, name, "click"]]
+        }
     except Exception as e:
-        logger.error(f"Error in summarize_node: {e}")
-        state["summary"] = f"Error during summarization: {e}"
+        error = f"Error executing click action: {e}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+
+### NEED DEBUGGING
+def type_node(state: State) -> dict:
+    driver = state["driver"]
+    accessibility_node_map = state["accessibility_node_map"]
+    action = state["action"]
+
+    if not driver or not accessibility_node_map or not action:
+        error = "Missing driver, accessibility_node_map, or action in state."
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+
+    element_index = action[0]
+    action_type = action[1]
+    text_to_type = action[2] if len(action) > 2 else ""
+
+    if "type" not in action_type.lower():
+        error = f"Action type is not type: {action_type}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
         
-    return {"summary": state["summary"]}
+    web_element, role, name = extract_element_from_accessibility_tree(
+        node_idx=element_index,
+        node_map=accessibility_node_map,
+        driver=driver
+    )
+
+    if not web_element:
+        error = f"Web element not found for index: {element_index}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+    
+    try:
+        execute_type_action(
+            driver=driver,
+            web_element=web_element,
+            text=text_to_type
+        )
+        logger.info(f"Executed type action on element index: {element_index}")
+        return {
+            "warn_obs": "",
+            "action_history": state["action_history"] + [[role, name, f"Type {text_to_type}"]]
+        }
+    except Exception as e:
+        error = f"Error executing type action: {e}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+
+        
+def wait_node(state: State) -> dict:
+    driver = state["driver"]
+
+    if not driver:
+        error = "Missing driver in state."
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+    
+    try:
+        execute_wait_action(driver=driver)
+        logger.info("Executed wait action.")
+        return {
+            "warn_obs": "",
+            "action_history": state["action_history"] + [["N/A", "N/A", "wait"]]
+        }
+    except Exception as e:
+        error = f"Error executing wait action: {e}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+
+def go_home_node(state: State) -> dict:
+    driver = state["driver"]
+
+    if not driver:
+        error = "Missing driver in state."
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+    
+    try:
+        execute_go_home_action(driver=driver)
+        logger.info("Executed go home action.")
+        return {
+            "warn_obs": "",
+            "action_history": state["action_history"] + [["N/A", "N/A", "go_home"]]
+        }
+    except Exception as e:
+        error = f"Error executing go home action: {e}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+
+def go_back_node(state: State) -> dict:
+    driver = state["driver"]
+
+    if not driver:
+        error = "Missing driver in state."
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+    
+    try:
+        execute_go_back_action(driver=driver)
+        logger.info("Executed go back action.")
+        return {
+            "warn_obs": "",
+            "action_history": state["action_history"] + [["N/A", "N/A", "go_back"]]
+        }
+    except Exception as e:
+        error = f"Error executing go back action: {e}"
+        logger.error(error)
+        return {     
+            "warn_obs": error
+        }
+
+def extract_data_node(state: State) -> dict:
+    driver = state["driver"]
+    accessibility_node_map = state["accessibility_node_map"]
+    action = state["action"]
+
+    if not driver or not accessibility_node_map or not action:
+        error = "Missing driver, accessibility_node_map, or action in state."
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+    
+    element_index = action[0]
+    action_type = action[1]
+
+    if "extract" not in action_type.lower():
+        error = f"Action type is not extract: {action_type}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+
+    web_element, role, name = extract_element_from_accessibility_tree(
+        node_idx=element_index,
+        node_map=accessibility_node_map,
+        driver=driver
+    )
+
+    if not web_element:
+        error = f"Web element not found for index: {element_index}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
+    
+    try:
+        extracted_data = extract_data_from_element(web_element=web_element)
+        logger.info(f"Extracted data from element index: {element_index}")
+        return {
+            "warn_obs": "",
+            "answer": extracted_data,
+            "action_history": state["action_history"] + [[role, name, "extract"]]
+        }
+    except Exception as e:
+        error = f"Error extracting data from element: {e}"
+        logger.error(error)
+        return {
+            "warn_obs": error
+        }
 
 
 
 
 
-# if __name__ == "__main__":
-#     agent = create_agent()
-
-#     initial_state: State = {
-#         "messages": [],
-#         "request": "Search for the term 'LangGraph' on the page and provide a summary of the content found.",
-#         "response": "",
-#         "response_summary": "",
-#         "url": "http://localhost:8000/index.html"
-#     }
-
-#     final_state = agent.invoke(initial_state)
-
-#     print("\nFinal Response Summary:")
-#     print(final_state["response_summary"])
+            
