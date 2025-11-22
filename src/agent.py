@@ -7,6 +7,7 @@ from utils import setup_logger
 from tools import create_webdriver, access_url, extract_accessibility_tree, parse_accessibility_tree, extract_element_from_accessibility_tree, execute_click_action, execute_type_action, execute_wait_action, execute_go_home_action, execute_go_back_action, extract_data_from_element
 
 from components.reAct import reAct_agent
+from src.components.answer import create_answer_agent
 
 from typing_extensions import TypedDict, Annotated, Any, List, Union
 import json
@@ -14,7 +15,8 @@ import json
 class State(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     task: str
-    answer: str
+    summary: List[str]
+    data_from_web_elements: List[str]
     web_element: WebElement
     url: str
     driver: object
@@ -23,6 +25,9 @@ class State(TypedDict):
     action_history: List[List[Union[str, str, str]]] # [role, name, action]
     warn_obs: List[str]
     action: List[Union[int, str]]
+    tool_count: int = 0
+    max_tool_usage: int = 3
+    final_anwser: str
 
 logger = setup_logger("new_agent")
 
@@ -69,7 +74,6 @@ def reAct_node(state: State) -> dict:
     """
 
     human_message = HumanMessage(content=user_message)
-    logger.info(f"ReAct User Message: {human_message.content}")
     
     new_messages = [human_message]
 
@@ -149,7 +153,8 @@ def click_node(
         logger.info(f"Executed click action on element index: {element_index}")
         return {
             "warn_obs": "",
-            "action_history": state["action_history"] + [[role, name, "click"]]
+            "action_history": state["action_history"] + [[role, name, "click"]],
+            "tool_count": state["tool_count"] + 1
         }
     except Exception as e:
         error = f"Error executing click action: {e}"
@@ -204,7 +209,8 @@ def type_node(state: State) -> dict:
         logger.info(f"Executed type action on element index: {element_index}")
         return {
             "warn_obs": "",
-            "action_history": state["action_history"] + [[role, name, f"Type {text_to_type}"]]
+            "action_history": state["action_history"] + [[role, name, f"Type {text_to_type}"]],
+            "tool_count": state["tool_count"] + 1
         }
     except Exception as e:
         error = f"Error executing type action: {e}"
@@ -229,7 +235,8 @@ def wait_node(state: State) -> dict:
         logger.info("Executed wait action.")
         return {
             "warn_obs": "",
-            "action_history": state["action_history"] + [["N/A", "N/A", "wait"]]
+            "action_history": state["action_history"] + [["N/A", "N/A", "wait"]],
+            "tool_count": state["tool_count"] + 1
         }
     except Exception as e:
         error = f"Error executing wait action: {e}"
@@ -253,7 +260,8 @@ def go_home_node(state: State) -> dict:
         logger.info("Executed go home action.")
         return {
             "warn_obs": "",
-            "action_history": state["action_history"] + [["N/A", "N/A", "go_home"]]
+            "action_history": state["action_history"] + [["N/A", "N/A", "go_home"]],
+            "tool_count": state["tool_count"] + 1
         }
     except Exception as e:
         error = f"Error executing go home action: {e}"
@@ -277,7 +285,8 @@ def go_back_node(state: State) -> dict:
         logger.info("Executed go back action.")
         return {
             "warn_obs": "",
-            "action_history": state["action_history"] + [["N/A", "N/A", "go_back"]]
+            "action_history": state["action_history"] + [["N/A", "N/A", "go_back"]],
+            "tool_count": state["tool_count"] + 1
         }
     except Exception as e:
         error = f"Error executing go back action: {e}"
@@ -326,8 +335,9 @@ def extract_data_node(state: State) -> dict:
         logger.info(f"Extracted data from element index: {element_index}")
         return {
             "warn_obs": "",
-            "answer": extracted_data,
-            "action_history": state["action_history"] + [[role, name, "extract"]]
+            "data_from_web_elements": state["data_from_web_elements"] + [extracted_data],
+            "action_history": state["action_history"] + [[role, name, "extract"]],
+            "tool_count": state["tool_count"] + 1
         }
     except Exception as e:
         error = f"Error extracting data from element: {e}"
@@ -335,6 +345,87 @@ def extract_data_node(state: State) -> dict:
         return {
             "warn_obs": error
         }
+    
+def route_workflow_node(state: State): 
+    action = state.get("action", [])
+
+    if not action or len(action) < 2:
+        logger.warning("No valid action found. Routing back to agent.")
+        return "extract_accessibility_tree"
+    
+    action_type = action[1].lower()
+
+    if "click" in action_type:
+        return "click"
+    elif "type" in action_type:
+        return "type"
+    elif "wait" in action_type:
+        return "wait"
+    elif "go_home" in action_type:
+        return "go_home"
+    elif "go_back" in action_type:
+        return "go_back"
+    elif "extract" in action_type:
+        return "extract_data"
+    else:
+        logger.warning(f"Unknown action type: {action_type}. Routing back to agent.")
+        return "extract_accessibility_tree"
+    
+def should_continue_node(state: State) -> dict:
+    tool_count = state.get("tool_count", 0)
+    max_tool_usage = state.get("max_tool_usage", 10)
+
+    if tool_count >= max_tool_usage:
+        logger.info(f"Reached maximum tool usage: {tool_count}/{max_tool_usage}. Routing to summarize node.")
+        return "END"
+    else:
+        logger.info(f"Tool usage within limit: {tool_count}/{max_tool_usage}. Continuing with agent.")
+        return "extract_accessibility_tree"
+    
+def answer_node(state: State):
+    answer = create_answer_agent()
+
+    user_message = f"""
+    Message for Answer Agent:
+    Task: {state['task']}
+    Extracted Information: {json.dumps(state['data_from_web_elements'])}
+    Accessibility Tree: {state['accessibility_tree_str']}
+    """
+
+    human_message = HumanMessage(content=user_message)
+
+    new_messages = [human_message]
+    answer_input = {
+        "extracted_info": json.dumps(state["data_from_web_elements"]),
+        "accessibility_tree_str": state["accessibility_tree_str"],
+        "task": state["task"]
+    }
+
+    try:
+        answer_response = answer.invoke(answer_input)
+
+        final_answer = answer_response.answer
+
+        logger.info(f"Final Answer: {final_answer}")
+
+        ai_message = AIMessage(content=f"Final Answer: {final_answer}")
+        new_messages.append(ai_message)
+
+        return {
+            "messages": new_messages,
+            "final_anwser": final_answer
+        }
+    except Exception as e:
+        logger.error(f"Error in answer_node: {e}")
+        return {
+            "messages": new_messages,
+            "final_anwser": ""
+        }
+
+
+    
+
+
 
 
 

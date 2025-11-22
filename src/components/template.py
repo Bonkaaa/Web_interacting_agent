@@ -1,55 +1,5 @@
 from langchain_core.prompts import ChatPromptTemplate
 
-planner_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """You are a planning agent that creates a step-by-step plan to accomplish a user's request on a webpage. \
-            You will be provided with the user's request and must generate a simple step by step plan needed to fulfill the request using web interaction tools. \
-            The plan should be a list of steps that can be executed using web interaction tools. \
-            The tools you can use are: create_driver, access_url, find_element, click_element, search_element, simplify_html, extract_content_from_html, close_driver. \
-            Return the plan as a list of steps. Each step should be focused on a single action and using one tool only at each step \
-            """
-        ),
-        (
-            "human", "{request}"
-        ),
-    ]
-)
-
-selenium_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """You are a web-interacting agent that uses Selenium WebDriver to interact with web pages. \
-            You will be provided with a step from a plan and must call the appropriate Selenium tool to execute that step. \
-            The selenium tools you can use are: create_driver, access_url, find_element, click_element, search_element, get_html_from_driver, simplify_html, close_driver. \
-            Use the tools correctly to perform the actions needed for the step. \
-            """
-        ),
-        (
-            "human", "{step}"
-        ),
-    ]
-)
-
-summarize_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """You are a summarization agent that summarizes the content from a dict containing HTML elements. \
-            You will be provided with a dict representing simplified HTML content and must generate a concise summary of the key information found within the HTML elements. \
-            Focus on extracting the most relevant details that would help understand the content and purpose of the webpage. \
-            Provide the summary in a clear and structured format. \
-            Response should be under 200 words.
-            """
-        ),
-        (
-            "human", "{html_content}"
-        )
-    ]
-)
-
 reAct_prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -73,7 +23,23 @@ reAct_prompt = ChatPromptTemplate.from_messages(
             """
         ),
         (
-            "human", "{accessibility_tree_str}\nAction History:\n{action_history}\nBased on the above accessibility tree and action history, decide on the next action to take to complete the task: {task}"
+            "human", "Accessibility Tree:\n{accessibility_tree_str}\nAction History:\n{action_history}\nBased on the above accessibility tree and action history, decide on the next action to take to complete the task: {task}"
+        ),
+    ]
+)
+
+answer_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            'system',
+            """You are an agent that response the final answer for the user's task based on the given information \
+            You will be provided with the extracted information from web elements, current accessibility tree, and user's task. \
+            Synthesize the information to provide a concise and accurate answer to the user's task. \
+            If the information is insufficient, respond with 'Insufficient information to provide an answer.' 
+            The final answer should be under 50 words."""
+        ),
+        (
+            'human', 'Extracted Information:\n{extracted_info}\nAccessibility Tree:\n{accessibility_tree_str}\nUser Task:\n{task}\nBased on the above information, provide the final answer.'
         ),
     ]
 )
