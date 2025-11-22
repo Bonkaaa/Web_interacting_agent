@@ -75,7 +75,7 @@ pip install -r requirements.txt
 - **langchain_huggingface**: HuggingFace model support
 - **selenium**: Web browser automation
 - **webdriver_manager**: Automatic ChromeDriver management
-- **beautifulsoup4 (bs4)**: HTML parsing
+- **bs4**: BeautifulSoup4 for HTML parsing
 - **python-dotenv**: Environment variable management
 - **pydantic**: Data validation and structured outputs
 - **torch**: PyTorch for ML operations
@@ -129,8 +129,8 @@ initial_state: State = {
     "web_element": None,
     "url": "https://chatgpt.com",
     "driver": None,
-    "accessibility_tree_str": "",
-    "accessibility_node_map": {},
+    "accessbility_tree_str": "",
+    "accessbility_node_map": {},
     "action_history": [],
     "warn_obs": [],
     "action": [],
@@ -201,6 +201,8 @@ This project is open source and available under the MIT License.
 - The `type_node` function is marked as "NEED DEBUGGING" in agent.py
 - Maximum tool usage is limited to prevent infinite loops
 - Chrome WebDriver needs to be compatible with installed Chrome version
+- The codebase contains some typos: `final_anwser` (should be `final_answer`) and `accessbility` (should be `accessibility`)
+- The requirements.txt file contains `langchain-ollama` twice (duplicate entry)
 
 ## 🔮 Future Improvements
 
