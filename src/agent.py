@@ -7,7 +7,8 @@ from utils import setup_logger
 from tools import create_webdriver, access_url, extract_accessibility_tree, parse_accessibility_tree, extract_element_from_accessibility_tree, execute_click_action, execute_type_action, execute_wait_action, execute_go_home_action, execute_go_back_action, extract_data_from_element
 
 from components.reAct import reAct_agent
-from src.components.answer import create_answer_agent
+from components.answer import create_answer_agent
+from components.check_cont import create_check_continue_agent
 
 from typing_extensions import TypedDict, Annotated, Any, List, Union
 import json
@@ -15,7 +16,6 @@ import json
 class State(TypedDict):
     messages: Annotated[List[AnyMessage], add_messages]
     task: str
-    summary: List[str]
     data_from_web_elements: List[str]
     web_element: WebElement
     url: str
@@ -377,10 +377,45 @@ def should_continue_node(state: State) -> dict:
 
     if tool_count >= max_tool_usage:
         logger.info(f"Reached maximum tool usage: {tool_count}/{max_tool_usage}. Routing to summarize node.")
-        return "END"
+        return "anwser"
     else:
-        logger.info(f"Tool usage within limit: {tool_count}/{max_tool_usage}. Continuing with agent.")
-        return "extract_accessibility_tree"
+        logger.info(f"Tool usage: {tool_count}/{max_tool_usage}. Invoking Check Continue Agent.")
+        check_continue = create_check_continue_agent()
+        user_message = f"""
+        Message for Check Continue Agent:
+        Task: {state['task']}
+        Extracted Information: {json.dumps(state['data_from_web_elements'])}
+        Accessibility Tree: {state['accessibility_tree_str']}
+        """
+
+        human_message = HumanMessage(content=user_message)
+
+        new_messages = [human_message]
+
+        check_continue_input = {
+            'extracted_info': json.dumps(state["data_from_web_elements"]),
+            'accessibility_tree_str': state["accessibility_tree_str"],
+            'task': state["task"]
+        }
+
+        try:
+            check_continue_response = check_continue.invoke(check_continue_input)
+
+            decision = check_continue_response.decision
+
+            logger.info(f"Decision for continue or stop using web interaction: {decision}")
+
+            ai_message = AIMessage(content=f'Decision: {decision}')
+            new_messages.append(ai_message)
+
+        except Exception as e:
+            logger.error(f"Error in should_continue_node: {e}")
+            decision = "CONTINUE"
+
+        if "FINAL ANSWER" in decision.upper():
+            return "answer"
+        else:
+            return "extract_accessibility_tree"
     
 def answer_node(state: State):
     answer = create_answer_agent()

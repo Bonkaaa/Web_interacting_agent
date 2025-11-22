@@ -23,7 +23,7 @@ reAct_prompt = ChatPromptTemplate.from_messages(
             """
         ),
         (
-            "human", "Accessibility Tree:\n{accessibility_tree_str}\nAction History:\n{action_history}\nBased on the above accessibility tree and action history, decide on the next action to take to complete the task: {task}"
+            "human", "Accessibility Tree:\n{accessibility_tree_str}\nAction History:\n{action_history}\nBased on the above accessibility tree and action history, decide on the next action to take to complete the task: {task}. The action should be in the format: [idx, action, additional_info]"
         ),
     ]
 )
@@ -40,6 +40,21 @@ answer_prompt = ChatPromptTemplate.from_messages(
         ),
         (
             'human', 'Extracted Information:\n{extracted_info}\nAccessibility Tree:\n{accessibility_tree_str}\nUser Task:\n{task}\nBased on the above information, provide the final answer.'
+        ),
+    ]
+)
+
+check_continue_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are an agent that decides whether to continue the web interaction or provide the final answer based on the given information \
+            You will be provided with the extracted information from web elements, current accessibility tree, and user's task. \
+            If you have sufficient information to answer the user's task, respond with 'FINAL ANSWER'. \
+            If more information is needed, respond with 'CONTINUE'."""
+        ),
+        (
+            "human", "Extracted Information:\n{extracted_info}\nAccessibility Tree:\n{accessibility_tree_str}\nUser Task:\n{task}\nBased on the above information, decide whether to continue or provide the final answer."
         ),
     ]
 )
